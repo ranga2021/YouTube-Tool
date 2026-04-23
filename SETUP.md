@@ -119,21 +119,21 @@ REDIS_URL=redis://redis:6379
 AUTH_SECRET=PASTE_64_CHAR_RANDOM_STRING_HERE
 AUTH_URL=https://YOUR_DOMAIN
 
-# Admin seed — used once by prisma/seed.ts to create the first admin
+# Admin seed — used by prisma/seed.cjs (Docker entrypoint + `npm start` after migrate)
 SEED_ADMIN_EMAIL=you@yourdomain.com
 SEED_ADMIN_PASSWORD=a-strong-password
 SEED_ADMIN_NAME=Kavindu
 
-# Anthropic (step 2)
-ANTHROPIC_API_KEY=sk-ant-api03-...
+# Anthropic (step 2) — paste real key only in your private .env, never in git
+ANTHROPIC_API_KEY=
 
 # Resend (step 3)
-RESEND_API_KEY=re_...
+RESEND_API_KEY=
 RESEND_FROM="Social Analytics <reports@yourdomain.com>"
 
 # Google OAuth (step 1)
-GOOGLE_CLIENT_ID=...apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-...
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
 YOUTUBE_REDIRECT_URI=https://YOUR_DOMAIN/api/youtube/oauth/callback
 
 # Postgres superuser (used by the `postgres` service in docker-compose.yml)
@@ -174,17 +174,18 @@ Build and launch:
 docker compose up -d --build
 ```
 
-First boot: the `app` container runs `prisma migrate deploy` automatically via
-`docker/entrypoint.sh`, creating every table.
+First boot: the `app` container runs `prisma migrate deploy` and then
+`node prisma/seed.cjs` via `docker/entrypoint.sh`, creating every table and the
+first admin (unless a user with a password already exists).
 
-### Create the first admin user
+### Create / reset the admin user manually (optional)
 
 ```bash
-docker compose exec app node node_modules/prisma/build/index.js db seed
+docker compose exec app node prisma/seed.cjs
 ```
 
-This reads `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` from your `.env` and
-creates the admin account.
+This reads `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` from the container env.
+Set `SEED_FORCE=true` to reset an existing admin password from env.
 
 ### Verify
 
@@ -213,10 +214,11 @@ If you're using Dokploy instead of raw docker-compose:
    service on port `3000`. Enable **Let's Encrypt** for HTTPS.
 6. **Deploy**. Dokploy will `docker compose up --build` and proxy TLS.
 
-Then seed the admin from the Dokploy **Terminal** button on the `app` service:
+The Docker image seeds the first admin on startup automatically. If you need
+to re-run seed by hand, use the Dokploy **Terminal** on the `app` service:
 
 ```bash
-node node_modules/prisma/build/index.js db seed
+node prisma/seed.cjs
 ```
 
 ---
@@ -296,7 +298,7 @@ Schema changes run themselves on container start thanks to `entrypoint.sh`
 | Scheduler (cron reconcile) | `src/lib/queue/scheduler.ts` |
 | Worker entrypoint | `src/worker/index.ts` |
 | Prisma schema | `prisma/schema.prisma` |
-| Admin seed | `prisma/seed.ts` |
+| Admin seed | `prisma/seed.cjs` |
 
 ---
 
