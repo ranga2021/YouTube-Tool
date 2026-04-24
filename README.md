@@ -113,16 +113,9 @@ In Dokploy, create a new **Application** from this Git repository.
 
 **First deploy:**
 
-The container entrypoint automatically runs `prisma migrate deploy` on startup. To seed the initial admin user after first deploy, open a shell into the app container:
+The container entrypoint runs `prisma migrate deploy` and then `node prisma/seed.cjs` on every startup. The seed **creates the first admin** when no user with a password exists yet (defaults: `admin@example.com` / `ChangeMe123!` unless you set `SEED_ADMIN_*` in the environment). To reset the admin password later, set `SEED_FORCE=true` once and redeploy, or run `docker exec -it <container-name> node prisma/seed.cjs` with the right env vars.
 
-```bash
-docker exec -it <container-name> node -e "
-  require('ts-node/register');
-  require('./prisma/seed.ts');
-"
-```
-
-Or temporarily set `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME` and run `npx tsx prisma/seed.ts` from a dev machine pointed at the production `DATABASE_URL`.
+You can also run `node prisma/seed.cjs` locally with `DATABASE_URL` pointed at production if you prefer.
 
 ---
 
@@ -132,7 +125,7 @@ Or temporarily set `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME` 
 ├── docker/                  # Docker entrypoint
 ├── prisma/
 │   ├── schema.prisma        # DB schema (grows each milestone)
-│   └── seed.ts              # Admin user seeding
+│   └── seed.cjs             # Admin user seeding
 ├── src/
 │   ├── app/
 │   │   ├── (app)/           # Protected routes (sidebar layout)

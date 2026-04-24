@@ -1,6 +1,6 @@
+import "@/lib/normalize-auth-url";
 import NextAuth, { type DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -22,7 +22,9 @@ const credentialsSchema = z.object({
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
-  adapter: PrismaAdapter(prisma),
+  // No PrismaAdapter: this app uses Credentials + JWT only. (YouTube OAuth is
+  // custom routes, not a NextAuth provider.) Adapter + Credentials often yields
+  // CredentialsSignin in production even when authorize() succeeds.
   providers: [
     Credentials({
       name: "credentials",

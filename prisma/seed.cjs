@@ -1,5 +1,5 @@
-import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
+const { PrismaClient } = require("@prisma/client");
+const bcrypt = require("bcryptjs");
 
 const prisma = new PrismaClient();
 
@@ -10,6 +10,18 @@ async function main() {
 
   if (password.length < 8) {
     throw new Error("SEED_ADMIN_PASSWORD must be at least 8 characters");
+  }
+
+  const credCount = await prisma.user.count({
+    where: { passwordHash: { not: null } },
+  });
+
+  if (credCount > 0 && process.env.SEED_FORCE !== "true") {
+    console.log(
+      `[seed] Skipping: ${credCount} user(s) already have a password. ` +
+        `Set SEED_FORCE=true to reset admin from SEED_ADMIN_* env.`,
+    );
+    return;
   }
 
   const passwordHash = await bcrypt.hash(password, 12);

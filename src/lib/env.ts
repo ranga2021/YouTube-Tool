@@ -1,3 +1,4 @@
+import "@/lib/normalize-auth-url";
 import { z } from "zod";
 
 const schema = z.object({

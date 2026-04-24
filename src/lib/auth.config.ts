@@ -1,3 +1,4 @@
+import "@/lib/normalize-auth-url";
 import type { NextAuthConfig } from "next-auth";
 
 /**
@@ -11,6 +12,8 @@ export const authConfig: NextAuthConfig = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
+        // Auth.js expects `sub` as the stable user id for JWT sessions.
+        token.sub = user.id;
         token.id = user.id;
         // @ts-expect-error role added in authorize
         token.role = user.role ?? "ADMIN";
