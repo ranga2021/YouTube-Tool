@@ -1,3 +1,4 @@
+import "@/lib/normalize-auth-url";
 import type { NextAuthConfig } from "next-auth";
 
 /**
