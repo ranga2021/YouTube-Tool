@@ -5,6 +5,35 @@ import { encryptString } from "@/lib/crypto";
 import { exchangeCodeForTokens } from "@/lib/youtube/oauth";
 import { listMyChannels } from "@/lib/youtube/client";
 
+/**
+ * Resolve the public base URL the browser is actually using. Behind a reverse
+ * proxy (Dokploy/Traefik) Next.js sees the request as coming to 0.0.0.0:3000
+ * because the proxy forwards it to the container bind address. Trust the
+ * `AUTH_URL` env var first — it's what the admin set for the public domain —
+ * then fall back to forwarded headers, and finally to the raw request URL.
+ */
+function publicBaseUrl(req: NextRequest): URL {
+  const fromEnv = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL;
+  if (fromEnv) {
+    try {
+      return new URL(fromEnv);
+    } catch {
+      /* fall through */
+    }
+  }
+  const proto =
+    req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(":", "");
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  if (host) {
+    try {
+      return new URL(`${proto}://${host}`);
+    } catch {
+      /* fall through */
+    }
+  }
+  return new URL(req.nextUrl.origin);
+}
+
 function redirectWithError(baseUrl: URL, slug: string | null, error: string) {
   const url = slug
     ? new URL(`/clients/${slug}`, baseUrl)
@@ -20,9 +49,11 @@ type ParsedState =
   | { mode?: undefined; channelId: string; csrf: string };
 
 export async function GET(req: NextRequest) {
+  const base = publicBaseUrl(req);
+
   const session = await auth();
   if (!session?.user) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    return NextResponse.redirect(new URL("/login", base));
   }
 
   const code = req.nextUrl.searchParams.get("code");
@@ -30,11 +61,11 @@ export async function GET(req: NextRequest) {
   const err = req.nextUrl.searchParams.get("error");
 
   if (err) {
-    return redirectWithError(req.nextUrl, null, `Google denied the request (${err})`);
+    return redirectWithError(base, null, `Google denied the request (${err})`);
   }
 
   if (!code || !rawState) {
-    return redirectWithError(req.nextUrl, null, "Missing code or state");
+    return redirectWithError(base, null, "Missing code or state");
   }
 
   let state: ParsedState;
@@ -43,12 +74,12 @@ export async function GET(req: NextRequest) {
       Buffer.from(rawState, "base64url").toString("utf8")
     ) as ParsedState;
   } catch {
-    return redirectWithError(req.nextUrl, null, "Invalid state");
+    return redirectWithError(base, null, "Invalid state");
   }
 
   const cookieCsrf = req.cookies.get("yt_oauth_csrf")?.value;
   if (!cookieCsrf || cookieCsrf !== state.csrf) {
-    return redirectWithError(req.nextUrl, null, "CSRF check failed");
+    return redirectWithError(base, null, "CSRF check failed");
   }
 
   // Normalize legacy state
@@ -56,9 +87,9 @@ export async function GET(req: NextRequest) {
     state.mode === "client" ? "client" : "channel";
 
   if (mode === "channel") {
-    return handleReconnect(req, code, (state as { channelId: string }).channelId);
+    return handleReconnect(req, base, code, (state as { channelId: string }).channelId);
   } else {
-    return handleClientPicker(req, code, (state as { clientId: string }).clientId);
+    return handleClientPicker(req, base, code, (state as { clientId: string }).clientId);
   }
 }
 
@@ -67,6 +98,7 @@ export async function GET(req: NextRequest) {
 // ---------------------------------------------------------------------------
 async function handleReconnect(
   req: NextRequest,
+  base: URL,
   code: string,
   channelId: string
 ) {
@@ -75,7 +107,7 @@ async function handleReconnect(
     include: { client: true },
   });
   if (!channel || channel.platform !== "YOUTUBE") {
-    return redirectWithError(req.nextUrl, null, "Channel not found");
+    return redirectWithError(base, null, "Channel not found");
   }
 
   let tokens;
@@ -83,7 +115,7 @@ async function handleReconnect(
     tokens = await exchangeCodeForTokens(code);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Token exchange failed";
-    return redirectWithError(req.nextUrl, channel.client.slug, msg);
+    return redirectWithError(base, channel.client.slug, msg);
   }
 
   // Look up the authorized channel to capture externalId and metadata
@@ -132,7 +164,7 @@ async function handleReconnect(
     },
   });
 
-  const redirect = new URL(`/clients/${channel.client.slug}`, req.nextUrl);
+  const redirect = new URL(`/clients/${channel.client.slug}`, base);
   redirect.searchParams.set("yt_connected", channel.id);
 
   const res = NextResponse.redirect(redirect);
@@ -146,12 +178,17 @@ async function handleReconnect(
 // ---------------------------------------------------------------------------
 async function handleClientPicker(
   req: NextRequest,
+  base: URL,
   code: string,
   clientId: string
 ) {
+  // `req` retained so future additions (e.g. reading more headers) don't need
+  // another plumbing pass.
+  void req;
+
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) {
-    return redirectWithError(req.nextUrl, null, "Client not found");
+    return redirectWithError(base, null, "Client not found");
   }
 
   let tokens;
@@ -159,7 +196,7 @@ async function handleClientPicker(
     tokens = await exchangeCodeForTokens(code);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Token exchange failed";
-    return redirectWithError(req.nextUrl, client.slug, msg);
+    return redirectWithError(base, client.slug, msg);
   }
 
   let channels;
@@ -167,12 +204,12 @@ async function handleClientPicker(
     channels = await listMyChannels(tokens.access_token);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to list channels";
-    return redirectWithError(req.nextUrl, client.slug, msg);
+    return redirectWithError(base, client.slug, msg);
   }
 
   if (channels.length === 0) {
     return redirectWithError(
-      req.nextUrl,
+      base,
       client.slug,
       "The authorized Google account has no YouTube channels"
     );
@@ -227,7 +264,7 @@ async function handleClientPicker(
       },
     });
 
-    const redirect = new URL(`/clients/${client.slug}`, req.nextUrl);
+    const redirect = new URL(`/clients/${client.slug}`, base);
     redirect.searchParams.set("yt_connected", created.id);
     const res = NextResponse.redirect(redirect);
     res.cookies.delete("yt_oauth_csrf");
@@ -239,7 +276,7 @@ async function handleClientPicker(
   // already connected, so just refresh.
   if (newChannels.length === 0) {
     return redirectWithError(
-      req.nextUrl,
+      base,
       client.slug,
       "All channels from that Google account are already connected to this client"
     );
@@ -275,7 +312,7 @@ async function handleClientPicker(
 
   const redirect = new URL(
     `/clients/${client.slug}/connect/${pending.id}`,
-    req.nextUrl
+    base
   );
   const res = NextResponse.redirect(redirect);
   res.cookies.delete("yt_oauth_csrf");
